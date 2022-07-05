@@ -1,0 +1,34 @@
+[
+    {
+        "ParameterKey": "pAMIKeyPair",
+        "ParameterValue": ""
+    },
+    {
+        "ParameterKey": "pCustomer",
+        "ParameterValue": ""
+    },
+    {
+        "ParameterKey": "pSubnet",
+        "ParameterValue": ""
+    },   
+    {
+        "ParameterKey": "pSecurityGroup",
+        "ParameterValue": ""
+    }, 
+    {
+        "ParameterKey": "pManagementAccountid",
+        "ParameterValue": ""
+    },
+    {
+        "ParameterKey": "pInstanceType",
+        "ParameterValue": "t3.micro"
+    },
+    {
+        "ParameterKey": "pOrganizationid",
+        "ParameterValue": ""
+    },
+    {
+        "ParameterKey": "pOrganizationalUnitid",
+        "ParameterValue": ""
+    }
+]

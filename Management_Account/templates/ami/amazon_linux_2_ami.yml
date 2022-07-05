@@ -1,0 +1,261 @@
+########################################################################################################################
+#  Any code, applications, scripts, templates, proofs of concept, documentation and other items provided by AWS under  #
+#  this SOW are "AWS Content," as defined in the Agreement, and are provided for illustration purposes only. All such  #
+#  AWS Content is provided solely at the option of AWS, and is subject to the terms of the Addendum and the Agreement. #
+#  Customer is solely responsible for using, deploying, testing, and supporting any code and applications provided by  #
+#  AWS under this SOW.                                                                                                 #
+########################################################################################################################
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create an AMI using Customizations for AWS Control Tower in a Management Account.
+
+##### Parameters Definition #####
+
+Parameters:
+  pAMIKeyPair:
+    Description: "Provide a name for the EC2 key pair"
+    Type: String
+
+  pCustomer:
+    Description: "Provide the name of the customer that owns the image"
+    Type: String
+
+  pSubnet:
+    Type: AWS::EC2::Subnet::Id
+    Description: SubnetId from your existing Virtual Private Cloud (VPC)
+
+  pSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: SSecurityGroupId from your existing Virtual Private Cloud (VPC)  
+
+  pManagementAccountid:
+    Description: "Provide the account id for the AWS Organization's management account"
+    Type: String
+
+  pInstanceType:
+    Description: "Select the instance type for build"
+    Type: String
+    AllowedValues:
+      - 't3.nano'
+      - 't3.micro'
+      - 't3.small'
+    ConstraintDescription: must be a valid EC2 instance type.
+
+  pOrganizationid:
+    Description: "Provide the name for the AWS Organization's ID of the management account"
+    Type: String
+
+  pOrganizationalUnitid:
+    Description: "Provide the name for the AWS Organizational Unit ID of the management account"
+    Type: String
+
+##### Resources Definition #####
+
+Resources:
+
+### This is the key pair being created in all accounts for use by images ###
+  rAMIKeyPair:
+    Type: 'AWS::EC2::KeyPair'
+    Properties:
+      KeyName: 
+        Ref: pAMIKeyPair
+      KeyType: rsa
+
+  rAMIKeyPairParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /ec2/keypair/amikeypair
+      Description: Name of the keypair using SSM
+      Type: String
+      Value: !Ref rAMIKeyPair
+
+### This is the s3 bucket that will be used to store the AMI creation logs ###
+  rAMIS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub control-tower-ami-${AWS::AccountId}-${AWS::Region}
+
+### Instance profile and role needed to create the AMI ###
+  rAMICreationManagementRole: 
+    Type: "AWS::IAM::Role"
+    Properties: 
+      RoleName: 'EC2ImageBuilderRole'
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilderECRContainerBuilds
+
+  rS3BucketLoggingPolicies: 
+    Type: "AWS::IAM::Policy"
+    Properties: 
+      PolicyName: "AMIS3BucketLoggingPolicy"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action: "s3:PutObject"
+            Resource:
+              - Fn::Sub:
+                  - arn:${AWS::Partition}:s3:::${BUCKET}/*
+                  - BUCKET:
+                      Ref: "rAMIS3Bucket"
+      Roles: 
+        - Ref: "rAMICreationManagementRole"
+
+  rAMICreationInstanceProfile: 
+    Type: "AWS::IAM::InstanceProfile"
+    Properties: 
+      InstanceProfileName: 'EC2AMIInstanceProfile'
+      Path: "/"
+      Roles: 
+        - Ref: "rAMICreationManagementRole"
+
+### This role is only needed for CFCT when you need to deploy from the management account ###
+  rAWSControlTowerExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: 'AWSControlTowerExecution'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - 
+            Effect: "Allow"
+            Principal:
+              AWS:
+                - Fn::Sub: arn:aws:iam::${pManagementAccountid}:root
+            Action: 
+              - "sts:AssumeRole"
+            Condition: {}
+      Path: "/"
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AdministratorAccess
+
+### Image Recipe for AMI build ###     
+  rImageRecipeAmazonLinux2:
+    Type: 'AWS::ImageBuilder::ImageRecipe'
+    Properties:
+      Name: 'Amazon Linux 2 Image Recipe'
+      Version: '1.0.0'
+      ParentImage: 
+        Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2-x86/x.x.x
+      Description: 'This is the image recipe used to build out Amazon Linux 2 image'
+      Components:
+### Follow this link to view components arns, https://docs.aws.amazon.com/imagebuilder/latest/userguide/image-recipe-details.html ###
+### Component arn to automatically update version of Amazon Linux 2 ###
+        - ComponentArn: 
+            Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x
+### Component arn to install amazon-cloudwatch-agent-linux ###      
+        - ComponentArn: 
+            Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/amazon-cloudwatch-agent-linux/x.x.x
+### Component arn to install aws-codedeploy-agent-linux ### 
+        - ComponentArn: 
+            Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/aws-codedeploy-agent-linux/x.x.x
+### Add user data to deploy any other type of installation here ###
+      AdditionalInstanceConfiguration:
+        UserDataOverride:
+          Fn::Base64:
+            Fn::Sub: |
+              #!/bin/bash
+              sudo yum install -y https://s3.${AWS::Region}.amazonaws.com/amazon-ssm-${AWS::Region}/latest/linux_amd64/amazon-ssm-agent.rpm
+      Tags: 
+        CustomerImageRecipe: !Sub ${pCustomer}ImageRecipe
+
+### Infrastructure Configuration for AMI build ###
+  rInfrastructureConfigurationAmazonLinux2:
+    Type: 'AWS::ImageBuilder::InfrastructureConfiguration'
+    Properties:
+      Name: 'Amazon Linux 2 Infrastructure with multiple agents installed'
+      InstanceProfileName: 
+        Ref: 'rAMICreationInstanceProfile'
+      Description: 'This is the Amazon Linux 2 infrastructure configuration with approved agents and user data configuration'
+      InstanceTypes:
+        - Ref: 'pInstanceType'
+      KeyPair: 
+        Ref: 'rAMIKeyPair'
+      Logging:
+        S3Logs:
+          S3BucketName: 
+            Ref: 'rAMIS3Bucket'
+      TerminateInstanceOnFailure: true
+      SubnetId: !Ref pSubnet
+      SecurityGroupIds:
+        - !Ref pSecurityGroup      
+      Tags:
+        CustomerInfraConfig: !Sub ${pCustomer}InfraConfig
+
+### Distribution Configuration for AMI build ###
+### See https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-distributionconfiguration.html ###
+  rDistributionConfigurationAmazonLinux2:
+    Type: 'AWS::ImageBuilder::DistributionConfiguration'
+    Properties:
+      Name: 'AMI Creation Distribution to us-east-1'
+      Description: 'This distribution configuration is used to distribute created AMI images to a specific OU environment'
+      Distributions:
+        - Region: 'us-east-1'
+          AmiDistributionConfiguration:
+            Name: 'ami_amazon-linux-2_us-east-1 {{ imagebuilder:buildDate }}'
+            Description: 'AMI to specific AWS organizational unit for us-east-1'
+            AMITags:
+              Name: !Sub '${pCustomer}-ami-amazon-linux-2 {{ imagebuilder:buildDate }}'
+            LaunchPermissionConfiguration:
+              OrganizationalUnitArns:
+                - Fn::Sub: 'arn:aws:organizations::${pManagementAccountid}:ou/${pOrganizationid}/${pOrganizationalUnitid}'
+      Tags:
+        CustomerDistributionConfig: !Sub ${pCustomer}DistributionConfig
+
+### Created Image for AMI build ###
+  rAMIImageAmazonLinux2:
+    Type: 'AWS::ImageBuilder::Image'
+    Properties:
+      ImageRecipeArn: 
+        Ref: rImageRecipeAmazonLinux2
+      InfrastructureConfigurationArn: 
+        Ref: rInfrastructureConfigurationAmazonLinux2
+      DistributionConfigurationArn: 
+        Ref: rDistributionConfigurationAmazonLinux2
+      ImageTestsConfiguration:
+        ImageTestsEnabled: false
+        TimeoutMinutes: 60
+      Tags:
+        CustomerImage: !Sub ${pCustomer}Image
+
+### Image Pipeline for AMI build ###
+  rImagePipelineAmazonLinux2:
+    Type: 'AWS::ImageBuilder::ImagePipeline'
+    Properties:
+      Name: 'amazon-linux-2-image-pipeline'
+      Description: 'This is the pipeline used to create Amazon Linux 2 AMI with various agents and user data'
+      ImageRecipeArn:
+        Ref: rImageRecipeAmazonLinux2
+      InfrastructureConfigurationArn: 
+        Ref: rInfrastructureConfigurationAmazonLinux2
+      DistributionConfigurationArn: 
+        Ref: rDistributionConfigurationAmazonLinux2
+      ImageTestsConfiguration:
+        ImageTestsEnabled: false
+        TimeoutMinutes: 90
+      Tags:
+        CustomerImagePipeline: !Sub ${pCustomer}ImagePipeline
+
+  ### Create an SSM Parameter Store entry with our resulting ImageId. ###
+  ### https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ssm-parameter.html ###
+  rAMIImageAmazonLinux2SSMAgentParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: 'This is the ssm parameter describing the reference location for the created image.'
+      Name: /ec2/images/AMIImageAmazonLinux2
+      Type: String
+      Value: !GetAtt rAMIImageAmazonLinux2.ImageId
+
+        

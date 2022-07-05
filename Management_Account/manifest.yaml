@@ -1,0 +1,23 @@
+---
+# Default region for deploying Custom Control Tower: Code Pipeline, Step functions, Lambda, SSM parameters, and StackSets
+region: us-east-1
+version: 2021-03-15
+
+resources:
+
+  ######################
+  # AMIs            #
+  ######################
+
+  - name: ami-amazon-linux-2
+    resource_file: templates/ami/amazon_linux_2_ami.yml
+    parameter_file: parameters/ami/ami-amazon-linux-2.json
+    deploy_method: stack_set
+    deployment_targets:
+      accounts:
+        - AccountName
+      # organizational_units: #array of strings
+      #  - OUName1
+      #  - OUName2
+    regions: # :type: list
+      - us-east-1
